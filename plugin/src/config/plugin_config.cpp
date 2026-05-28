@@ -29,6 +29,16 @@ void ReadSamplerToggle(const json& a_obj, const char* a_key, SamplerToggle& a_ou
     }
 }
 
+// Address-Library ID override block:
+//   "<key>": { "id_se": 12345, "id_ae": 67890 }
+// Either field may be omitted/zero; zero means "leave installer default".
+void ReadHookIds(const json& a_obj, const char* a_key, HookIds& a_out) {
+    if (auto it = a_obj.find(a_key); it != a_obj.end() && it->is_object()) {
+        Read(*it, "id_se", a_out.id_se);
+        Read(*it, "id_ae", a_out.id_ae);
+    }
+}
+
 PluginConfig ParseJson(const json& a_root) {
     PluginConfig cfg;
 
@@ -55,12 +65,17 @@ PluginConfig ParseJson(const json& a_root) {
             Read(*cb, "ai_hook", cfg.cpu_breakdown.ai_hook);
             Read(*cb, "render_submit_hook", cfg.cpu_breakdown.render_submit_hook);
             Read(*cb, "main_loop_hook", cfg.cpu_breakdown.main_loop_hook);
+            ReadHookIds(*cb, "havok_hook_ids", cfg.cpu_breakdown.havok_hook_ids);
+            ReadHookIds(*cb, "ai_hook_ids", cfg.cpu_breakdown.ai_hook_ids);
+            ReadHookIds(*cb, "render_submit_hook_ids",
+                        cfg.cpu_breakdown.render_submit_hook_ids);
         }
         if (auto p = s.find("papyrus"); p != s.end()) {
             Read(*p, "enabled", cfg.papyrus.enabled);
             Read(*p, "snapshot_hz", cfg.papyrus.snapshot_hz);
             Read(*p, "top_n", cfg.papyrus.top_n);
             Read(*p, "vm_hook", cfg.papyrus.vm_hook);
+            ReadHookIds(*p, "vm_hook_ids", cfg.papyrus.vm_hook_ids);
         }
         if (auto st = s.find("streaming"); st != s.end()) {
             Read(*st, "enabled", cfg.streaming.enabled);

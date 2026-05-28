@@ -192,7 +192,7 @@ void OnSkseMessage(SKSE::MessagingInterface::Message* a_msg) {
             if (g_config.papyrus.enabled) {
                 g_papyrusSampler = std::make_unique<skygraph::samplers::PapyrusSampler>(
                     *g_writer, g_config.papyrus.snapshot_hz, g_config.papyrus.top_n,
-                    g_config.papyrus.vm_hook);
+                    g_config.papyrus.vm_hook, g_config.papyrus.vm_hook_ids);
                 g_papyrusSampler->Start();
             }
             if (g_config.streaming.enabled) {

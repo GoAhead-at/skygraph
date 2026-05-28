@@ -13,10 +13,13 @@
     "cpu_breakdown": {
       "enabled": true,
       "main_loop_hook": true,
-      "_NOTE": "havok/ai/render_submit hooks require Address Library IDs verified against your runtime. Flip the corresponding flag to true after editing subsystem_hooks.cpp's kSeId/kAeId pair.",
+      "_NOTE": "havok/ai/render_submit hooks need Address Library IDs that match YOUR runtime. The defaults baked into the plugin are speculative. See docs/address-library.md. To override an ID without recompiling, set id_se / id_ae below; leave at 0 to use the plugin's compiled-in default.",
       "havok_hook": false,
+      "havok_hook_ids": { "id_se": 0, "id_ae": 0 },
       "ai_hook": false,
-      "render_submit_hook": false
+      "ai_hook_ids": { "id_se": 0, "id_ae": 0 },
+      "render_submit_hook": false,
+      "render_submit_hook_ids": { "id_se": 0, "id_ae": 0 }
     },
     "memory": { "enabled": true, "rate_hz": 1 },
     "memory_pressure": { "enabled": true, "rate_hz": 1 },
@@ -24,8 +27,9 @@
       "enabled": true,
       "snapshot_hz": 10,
       "top_n": 16,
-      "_NOTE": "vm_hook installs the per-script CPU attribution hook on VM::ExecuteStack. Verify the Address Library ID in papyrus_sampler.cpp before enabling.",
-      "vm_hook": false
+      "_NOTE": "vm_hook patches the AttemptFunctionCall call site inside VirtualMachine::ProcessMessageQueue (offset 0x7F). Defaults id_se=98130 / id_ae=104853 are taken from DennisSoemers/PapyrusProfiler and verified for SE 1.5.97 and AE 1.6.640+. Override id_se / id_ae below to retarget for a different runtime; 0 means use the compiled-in default.",
+      "vm_hook": true,
+      "vm_hook_ids": { "id_se": 0, "id_ae": 0 }
     },
     "state": { "enabled": true, "rate_hz": 2 },
     "events": { "enabled": true },

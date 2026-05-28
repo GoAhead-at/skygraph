@@ -35,36 +35,49 @@ std::string ScriptNameFromStack(RE::BSScript::Stack* a_stack) {
     return {};
 }
 
-// VM stack run hook: invoked once per stack execution slice. We bracket with
-// QPC, attribute the time to the script name, and feed cpu_breakdown.
+// VM function-call hook. We don't hook a VM function entry; we patch the
+// `call AttemptFunctionCall` site inside VirtualMachine::ProcessMessageQueue
+// at the well-known offset 0x7F. Every function the VM dispatches goes
+// through that one call instruction, so this gives us:
+//   - inclusive wall time per call (QPC bracket around the original)
+//   - per-script attribution by walking the stack's top frame
+// without requiring a vtable swap or guessing inner-function IDs.
 //
-// The exact function being hooked is the per-stack dispatch entry inside
-// BSScript::Internal::VirtualMachine. Address Library IDs below resolve to
-// the same call site across SE / AE; if a future runtime rearranges, the
-// install try/catch demotes us to "no per-script attribution" without
-// crashing.
+// IDs and signature lifted from DennisSoemers/PapyrusProfiler (proven in
+// production on SE 1.5.97 and AE 1.6.640+). See docs/address-library.md.
+//
+// The return type is `BSFixedString*` -- the engine uses it for diagnostic
+// messages; we forward whatever the original returned.
 struct StackRunHook {
-    static std::uint32_t thunk(RE::BSScript::Internal::VirtualMachine* a_vm,
-                               RE::BSTSmartPointer<RE::BSScript::Stack>& a_stack,
-                               RE::BSScript::ErrorLogger& a_logger,
-                               RE::BSScript::Internal::IFuncCallQuery& a_query) {
+    using ThunkSig = RE::BSFixedString*(
+        RE::BSScript::Internal::VirtualMachine* a_vm,
+        RE::BSScript::Stack* a_stack,
+        RE::BSTSmartPointer<RE::BSScript::Internal::IFuncCallQuery>& a_query);
+
+    static RE::BSFixedString* thunk(
+        RE::BSScript::Internal::VirtualMachine* a_vm,
+        RE::BSScript::Stack* a_stack,
+        RE::BSTSmartPointer<RE::BSScript::Internal::IFuncCallQuery>& a_query) {
         const auto t0 = QpcNowUs();
-        const auto ret = _original(a_vm, a_stack, a_logger, a_query);
+        auto* ret = _original(a_vm, a_stack, a_query);
         const auto dt = QpcNowUs() - t0;
         if (dt > 0) {
             CpuBreakdownSampler::AddPapyrusUs(dt);
-            const auto name = ScriptNameFromStack(a_stack.get());
+            const auto name = ScriptNameFromStack(a_stack);
             if (!name.empty()) {
                 PapyrusAttribution::Add(name, static_cast<std::uint64_t>(dt));
             }
         }
         return ret;
     }
-    static inline REL::Relocation<decltype(thunk)> _original;
-    // VM::ExecuteStack -- speculative anchor; verify before enabling.
-    // See note in subsystem_hooks.cpp on Address Library ID lookup.
-    static constexpr std::uint64_t kSeId = 98520;
-    static constexpr std::uint64_t kAeId = 105200;
+    static inline REL::Relocation<ThunkSig> _original;
+
+    // VirtualMachine::ProcessMessageQueue + 0x7F == the CALL site that
+    // invokes AttemptFunctionCall. Overridable via
+    // samplers.papyrus.vm_hook_ids in skygraph.json.
+    static constexpr std::uint64_t kDefaultSeId = 98130;
+    static constexpr std::uint64_t kDefaultAeId = 104853;
+    static constexpr std::uintptr_t kCallSiteOffset = 0x7F;
 };
 
 void EmitVmCounters(transport::WriterThread& a_writer) {
@@ -136,11 +149,13 @@ void EmitTopScripts(transport::WriterThread& a_writer, int a_topN, double a_peri
 PapyrusSampler::PapyrusSampler(transport::WriterThread& a_writer,
                                double a_snapshotHz,
                                int a_topN,
-                               bool a_installVmHook)
+                               bool a_installVmHook,
+                               config::HookIds a_hookIds)
     : Sampler{ "papyrus", a_writer },
       _snapshotHz{ a_snapshotHz <= 0.0 ? 10.0 : a_snapshotHz },
       _topN{ a_topN <= 0 ? 16 : a_topN },
-      _installVmHook{ a_installVmHook } {}
+      _installVmHook{ a_installVmHook },
+      _hookIds{ a_hookIds } {}
 
 void PapyrusSampler::Start() {
     bool expected = false;
@@ -171,21 +186,29 @@ void PapyrusSampler::Stop() {
 }
 
 bool PapyrusSampler::InstallHook() {
+    const auto seId = _hookIds.id_se != 0 ? _hookIds.id_se : StackRunHook::kDefaultSeId;
+    const auto aeId = _hookIds.id_ae != 0 ? _hookIds.id_ae : StackRunHook::kDefaultAeId;
     try {
         SKSE::AllocTrampoline(14);
         REL::Relocation<std::uintptr_t> target{
-            REL::RelocationID(StackRunHook::kSeId, StackRunHook::kAeId), 0x0
+            REL::RelocationID(seId, aeId), StackRunHook::kCallSiteOffset
         };
         StackRunHook::_original =
             SKSE::GetTrampoline().write_call<5>(target.address(),
                                                  &StackRunHook::thunk);
-        spdlog::info("papyrus: VM stack hook installed");
+        spdlog::info("papyrus: VM function-call hook installed "
+                     "(id_se={} id_ae={} offset=0x{:x})",
+                     seId, aeId, StackRunHook::kCallSiteOffset);
         return true;
     } catch (const std::exception& e) {
-        spdlog::warn("papyrus: VM stack hook failed: {}", e.what());
+        spdlog::warn("papyrus: VM function-call hook failed "
+                     "(id_se={} id_ae={} offset=0x{:x}): {}",
+                     seId, aeId, StackRunHook::kCallSiteOffset, e.what());
         return false;
     } catch (...) {
-        spdlog::warn("papyrus: VM stack hook unknown failure");
+        spdlog::warn("papyrus: VM function-call hook unknown failure "
+                     "(id_se={} id_ae={} offset=0x{:x})",
+                     seId, aeId, StackRunHook::kCallSiteOffset);
         return false;
     }
 }

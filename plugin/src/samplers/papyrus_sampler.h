@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/plugin_config.h"
 #include "samplers/sampler.h"
 
 #include <atomic>
@@ -20,7 +21,8 @@ public:
     PapyrusSampler(transport::WriterThread& a_writer,
                    double a_snapshotHz,
                    int a_topN,
-                   bool a_installVmHook);
+                   bool a_installVmHook,
+                   config::HookIds a_hookIds);
 
     void Start() override;
     void Stop() override;
@@ -29,6 +31,7 @@ private:
     double _snapshotHz;
     int _topN;
     bool _installVmHook;
+    config::HookIds _hookIds;
     std::atomic<bool> _running{ false };
     std::atomic<bool> _hookInstalled{ false };
     std::thread _thread;

@@ -14,35 +14,30 @@ namespace skygraph::samplers::subsystem_hooks {
 namespace {
 
 // Each hook is structured identically:
-//   1. RAII bracket using QpcNowUs() to measure inclusive subsystem time.
-//   2. Add the delta to the matching CpuBreakdownSampler bucket.
-//   3. Call through to the original function.
-//
-// The Address Library IDs below are the conventionally-used anchors for
-// Skyrim SE / AE plugin development. They were validated against the SE 1.5.97
-// and AE 1.6.640+ binaries by the SKSE Address Library project. If a future
-// game update breaks an ID, the catch block silently degrades the breakdown
-// by rolling that subsystem's time into `other_ms`.
-
-// IMPORTANT: the integer IDs below are SPECULATIVE placeholders. They were
-// chosen from memory of common SKSE patterns and have NOT been verified
-// against any specific runtime's Address Library database. If you enable
-// these subsystem hooks in skygraph.json without first verifying each ID for
-// your runtime, CommonLibSSE-NG will pop a fatal "Failed to find the id
-// within the address library" messagebox during plugin load.
-//
-// For each hook, look the actual function up in the address library
-// (https://www.nexusmods.com/skyrimspecialedition/mods/32444 for SE, the
-// Address Library Database project for AE) and replace the kSeId / kAeId
-// constants with the right numbers for your target runtime.
-
-// Each hook is structured identically:
 //   1. Bracket the call with QpcNowUs() to measure inclusive subsystem time.
 //   2. Add the delta to the matching CpuBreakdownSampler bucket.
 //   3. Call through to the original function.
 //
-// If the address lookup fails or the catch{} fires for any other reason,
-// that subsystem's CPU time silently rolls into other_ms.
+// IMPORTANT: the kDefault*Id integers below are SPECULATIVE placeholders.
+// They were chosen from memory of common SKSE patterns and have NOT been
+// verified against any specific runtime's Address Library database. Enabling
+// a hook with the wrong ID will cause CommonLibSSE-NG to pop a fatal
+// "Failed to find the id within the address library" messagebox during plugin
+// load and Skyrim won't start.
+//
+// To override an ID without recompiling, set the matching
+// samplers.cpu_breakdown.<hook>_hook_ids = { id_se, id_ae } block in
+// skygraph.json. A non-zero override wins; a zero (or missing) field falls
+// back to the kDefault*Id baked in here. See docs/address-library.md for
+// how to look up the right IDs for your runtime.
+//
+// If the install throws (and our catch{} actually catches it -- which is
+// not guaranteed; see plugin.cpp note), that subsystem's CPU time silently
+// rolls into other_ms.
+
+constexpr std::uint64_t PickId(std::uint64_t a_override, std::uint64_t a_default) {
+    return a_override != 0 ? a_override : a_default;
+}
 
 // -------- Havok world step ----------------------------------------------
 // We don't dereference the world pointer here -- only measure call duration --
@@ -55,27 +50,30 @@ struct HavokHook {
         CpuBreakdownSampler::AddHavokUs(QpcNowUs() - t0);
     }
     static inline REL::Relocation<decltype(thunk)> _original;
-    // bhkWorld::Update -- speculative anchor; verify before enabling.
-    static constexpr std::uint64_t kSeId = 76202;
-    static constexpr std::uint64_t kAeId = 77985;
+    static constexpr std::uint64_t kDefaultSeId = 76202;  // bhkWorld::Update
+    static constexpr std::uint64_t kDefaultAeId = 77985;
 };
 
-bool InstallHavok() {
+bool InstallHavok(const config::HookIds& a_ids) {
+    const auto seId = PickId(a_ids.id_se, HavokHook::kDefaultSeId);
+    const auto aeId = PickId(a_ids.id_ae, HavokHook::kDefaultAeId);
     try {
         SKSE::AllocTrampoline(14);
         REL::Relocation<std::uintptr_t> target{
-            REL::RelocationID(HavokHook::kSeId, HavokHook::kAeId), 0x0
+            REL::RelocationID(seId, aeId), 0x0
         };
         HavokHook::_original =
             SKSE::GetTrampoline().write_call<5>(target.address(),
                                                  &HavokHook::thunk);
-        spdlog::info("breakdown: Havok hook installed");
+        spdlog::info("breakdown: Havok hook installed (id_se={} id_ae={})", seId, aeId);
         return true;
     } catch (const std::exception& e) {
-        spdlog::warn("breakdown: Havok hook failed: {} -- folding into other_ms", e.what());
+        spdlog::warn("breakdown: Havok hook failed (id_se={} id_ae={}): {} -- "
+                     "folding into other_ms", seId, aeId, e.what());
         return false;
     } catch (...) {
-        spdlog::warn("breakdown: Havok hook unknown failure -- folding into other_ms");
+        spdlog::warn("breakdown: Havok hook unknown failure (id_se={} id_ae={}) -- "
+                     "folding into other_ms", seId, aeId);
         return false;
     }
 }
@@ -88,27 +86,30 @@ struct AiHook {
         CpuBreakdownSampler::AddAiUs(QpcNowUs() - t0);
     }
     static inline REL::Relocation<decltype(thunk)> _original;
-    // ProcessLists::Update -- speculative anchor; verify before enabling.
-    static constexpr std::uint64_t kSeId = 40314;
-    static constexpr std::uint64_t kAeId = 41340;
+    static constexpr std::uint64_t kDefaultSeId = 40314;  // ProcessLists::Update
+    static constexpr std::uint64_t kDefaultAeId = 41340;
 };
 
-bool InstallAi() {
+bool InstallAi(const config::HookIds& a_ids) {
+    const auto seId = PickId(a_ids.id_se, AiHook::kDefaultSeId);
+    const auto aeId = PickId(a_ids.id_ae, AiHook::kDefaultAeId);
     try {
         SKSE::AllocTrampoline(14);
         REL::Relocation<std::uintptr_t> target{
-            REL::RelocationID(AiHook::kSeId, AiHook::kAeId), 0x0
+            REL::RelocationID(seId, aeId), 0x0
         };
         AiHook::_original =
             SKSE::GetTrampoline().write_call<5>(target.address(),
                                                  &AiHook::thunk);
-        spdlog::info("breakdown: AI (ProcessLists::Update) hook installed");
+        spdlog::info("breakdown: AI hook installed (id_se={} id_ae={})", seId, aeId);
         return true;
     } catch (const std::exception& e) {
-        spdlog::warn("breakdown: AI hook failed: {} -- folding into other_ms", e.what());
+        spdlog::warn("breakdown: AI hook failed (id_se={} id_ae={}): {} -- "
+                     "folding into other_ms", seId, aeId, e.what());
         return false;
     } catch (...) {
-        spdlog::warn("breakdown: AI hook unknown failure -- folding into other_ms");
+        spdlog::warn("breakdown: AI hook unknown failure (id_se={} id_ae={}) -- "
+                     "folding into other_ms", seId, aeId);
         return false;
     }
 }
@@ -122,27 +123,31 @@ struct RenderSubmitHook {
         CpuBreakdownSampler::AddRenderSubmitUs(QpcNowUs() - t0);
     }
     static inline REL::Relocation<decltype(thunk)> _original;
-    // BSGraphics::Renderer::End -- speculative anchor; verify before enabling.
-    static constexpr std::uint64_t kSeId = 75462;
-    static constexpr std::uint64_t kAeId = 77246;
+    static constexpr std::uint64_t kDefaultSeId = 75462;  // BSGraphics::Renderer::End
+    static constexpr std::uint64_t kDefaultAeId = 77246;
 };
 
-bool InstallRenderSubmit() {
+bool InstallRenderSubmit(const config::HookIds& a_ids) {
+    const auto seId = PickId(a_ids.id_se, RenderSubmitHook::kDefaultSeId);
+    const auto aeId = PickId(a_ids.id_ae, RenderSubmitHook::kDefaultAeId);
     try {
         SKSE::AllocTrampoline(14);
         REL::Relocation<std::uintptr_t> target{
-            REL::RelocationID(RenderSubmitHook::kSeId, RenderSubmitHook::kAeId), 0x0
+            REL::RelocationID(seId, aeId), 0x0
         };
         RenderSubmitHook::_original =
             SKSE::GetTrampoline().write_call<5>(target.address(),
                                                  &RenderSubmitHook::thunk);
-        spdlog::info("breakdown: render submit hook installed");
+        spdlog::info("breakdown: render submit hook installed (id_se={} id_ae={})",
+                     seId, aeId);
         return true;
     } catch (const std::exception& e) {
-        spdlog::warn("breakdown: render submit hook failed: {} -- folding into other_ms", e.what());
+        spdlog::warn("breakdown: render submit hook failed (id_se={} id_ae={}): {} -- "
+                     "folding into other_ms", seId, aeId, e.what());
         return false;
     } catch (...) {
-        spdlog::warn("breakdown: render submit hook unknown failure -- folding into other_ms");
+        spdlog::warn("breakdown: render submit hook unknown failure "
+                     "(id_se={} id_ae={}) -- folding into other_ms", seId, aeId);
         return false;
     }
 }
@@ -156,9 +161,9 @@ void InstallAll(const config::CpuBreakdownConfig& a_cfg) {
     }
 
     CpuBreakdownSampler::EnabledMask mask{};
-    if (a_cfg.havok_hook)         mask.havok = InstallHavok();
-    if (a_cfg.ai_hook)            mask.ai = InstallAi();
-    if (a_cfg.render_submit_hook) mask.render_submit = InstallRenderSubmit();
+    if (a_cfg.havok_hook)         mask.havok = InstallHavok(a_cfg.havok_hook_ids);
+    if (a_cfg.ai_hook)            mask.ai = InstallAi(a_cfg.ai_hook_ids);
+    if (a_cfg.render_submit_hook) mask.render_submit = InstallRenderSubmit(a_cfg.render_submit_hook_ids);
     // main_loop_hook is folded into the frame sampler's existing Main::Update
     // hook; nothing extra to install.
 

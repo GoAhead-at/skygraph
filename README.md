@@ -69,11 +69,23 @@ skygraph.exe path\to\session.ndjson.gz
 
 You can also use **File -> Open Session...** in the viewer.
 
+## Enabling optional hooks
+
+By default, only the frame-time / `Main::Update` hook is installed. Per-script
+Papyrus attribution, Havok, AI, and render-submit hooks depend on Address
+Library IDs that vary across game versions; the plugin ships speculative
+defaults that you must verify before enabling.
+
+See [docs/address-library.md](docs/address-library.md) for how to look up an
+ID for your runtime and override it from `Data/SKSE/Plugins/skygraph.json`
+without recompiling.
+
 ## Docs
 
 - [Installation guide](docs/installation.md) -- MO2 + manual install, plus uninstall steps
 - [Diagnosing stutter](docs/diagnosing-stutter.md) -- the workflow Skygraph is shaped around
 - [Packaging](docs/packaging.md) -- how to build the redistributable archives
+- [Address Library IDs](docs/address-library.md) -- enabling per-script and per-subsystem hooks
 - [Wire protocol](protocol/docs/protocol.md) -- NDJSON record reference
 
 ## License
