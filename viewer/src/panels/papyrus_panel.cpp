@@ -3,10 +3,13 @@
 #include "state/telemetry_store.h"
 
 #include <imgui.h>
+#include <implot.h>
 
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <string>
 #include <vector>
 
 namespace skygraph::viewer::panels::papyrus {
@@ -26,6 +29,71 @@ void DrawHeader(const TelemetryStore& a_store) {
     ImGui::Separator();
 }
 
+// Top-N pie chart of script CPU time over the latest snapshot window.
+// Anything below the cut-off is folded into a single "(other)" slice so the
+// pie always sums to 100% of observed Papyrus work.
+void DrawTopPie(const std::vector<TelemetryStore::HotScript>& a_rows) {
+    if (a_rows.empty()) return;
+
+    constexpr int kMaxSlices = 10;
+    constexpr float kPieHeight = 240.0f;
+
+    std::vector<TelemetryStore::HotScript> sorted = a_rows;
+    const auto cutEnd = sorted.begin() +
+        static_cast<std::ptrdiff_t>(
+            std::min<std::size_t>(kMaxSlices, sorted.size()));
+    std::partial_sort(sorted.begin(), cutEnd, sorted.end(),
+                      [](const auto& a, const auto& b) {
+        return a.us_window > b.us_window;
+    });
+
+    const int topCount = static_cast<int>(cutEnd - sorted.begin());
+
+    std::vector<std::string> labelStore;
+    std::vector<const char*> labels;
+    std::vector<double> values;
+    labelStore.reserve(static_cast<std::size_t>(topCount) + 1);
+    labels.reserve(static_cast<std::size_t>(topCount) + 1);
+    values.reserve(static_cast<std::size_t>(topCount) + 1);
+
+    for (int i = 0; i < topCount; ++i) {
+        if (sorted[i].us_window == 0) continue;
+        labelStore.push_back(sorted[i].name);
+        values.push_back(static_cast<double>(sorted[i].us_window));
+    }
+
+    std::uint64_t otherUs = 0;
+    for (std::size_t i = static_cast<std::size_t>(topCount);
+         i < sorted.size(); ++i) {
+        otherUs += sorted[i].us_window;
+    }
+    if (otherUs > 0) {
+        labelStore.emplace_back("(other)");
+        values.push_back(static_cast<double>(otherUs));
+    }
+
+    if (values.empty()) return;
+
+    // c_str() pointers must be re-collected AFTER labelStore is final because
+    // any prior push_back may have reallocated and invalidated earlier ones.
+    for (const auto& s : labelStore) labels.push_back(s.c_str());
+
+    if (ImPlot::BeginPlot("##script_pie", ImVec2(-1, kPieHeight),
+                          ImPlotFlags_Equal | ImPlotFlags_NoMouseText)) {
+        ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
+        ImPlot::SetupAxes(nullptr, nullptr,
+                          ImPlotAxisFlags_NoDecorations,
+                          ImPlotAxisFlags_NoDecorations);
+        ImPlot::SetupAxesLimits(0, 1, 0, 1, ImPlotCond_Always);
+        ImPlot::PlotPieChart(labels.data(), values.data(),
+                             static_cast<int>(values.size()),
+                             0.5, 0.5, 0.4, "%.1f%%", 90.0,
+                             ImPlotPieChartFlags_Normalize);
+        ImPlot::EndPlot();
+    }
+    ImGui::Separator();
+}
+
 }  // namespace
 
 void Draw(const TelemetryStore& a_store, State& a_state) {
@@ -35,6 +103,8 @@ void Draw(const TelemetryStore& a_store, State& a_state) {
         ImGui::TextDisabled("no script timing yet (VM hook may not be installed)");
         return;
     }
+
+    DrawTopPie(a_store.hot_scripts);
 
     constexpr ImGuiTableFlags kFlags =
         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
