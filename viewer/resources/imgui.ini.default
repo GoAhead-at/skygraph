@@ -1,0 +1,38 @@
+; Default first-run window layout for skygraph viewer.
+; ImGui replaces this with the user's last saved layout once they move/resize
+; any panel. Re-copy from imgui.ini.default to reset.
+
+[Window][skygraph::dockspace]
+Pos=0,18
+Size=1600,882
+Collapsed=0
+
+[Window][Charts]
+Pos=0,46
+Size=820,540
+Collapsed=0
+
+[Window][Papyrus]
+Pos=822,46
+Size=440,540
+Collapsed=0
+
+[Window][Stutters]
+Pos=1264,46
+Size=336,540
+Collapsed=0
+
+[Window][Events]
+Pos=822,588
+Size=440,312
+Collapsed=0
+
+[Window][Plugins]
+Pos=1264,588
+Size=336,312
+Collapsed=0
+
+[Window][Timeline]
+Pos=0,588
+Size=820,312
+Collapsed=0

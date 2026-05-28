@@ -1,0 +1,49 @@
+{
+  "$schema": "skygraph.config.v1",
+  "log": {
+    "level": "info",
+    "console": false
+  },
+  "transport": {
+    "pipe_name": "\\\\.\\pipe\\skygraph",
+    "writer_queue_capacity": 16384
+  },
+  "samplers": {
+    "frame": { "enabled": true, "rate_hz": 60 },
+    "cpu_breakdown": {
+      "enabled": true,
+      "main_loop_hook": true,
+      "_NOTE": "havok/ai/render_submit hooks require Address Library IDs verified against your runtime. Flip the corresponding flag to true after editing subsystem_hooks.cpp's kSeId/kAeId pair.",
+      "havok_hook": false,
+      "ai_hook": false,
+      "render_submit_hook": false
+    },
+    "memory": { "enabled": true, "rate_hz": 1 },
+    "memory_pressure": { "enabled": true, "rate_hz": 1 },
+    "papyrus": {
+      "enabled": true,
+      "snapshot_hz": 10,
+      "top_n": 16,
+      "_NOTE": "vm_hook installs the per-script CPU attribution hook on VM::ExecuteStack. Verify the Address Library ID in papyrus_sampler.cpp before enabling.",
+      "vm_hook": false
+    },
+    "state": { "enabled": true, "rate_hz": 2 },
+    "events": { "enabled": true },
+    "streaming": { "enabled": false, "hitch_threshold_ms": 5.0 },
+    "render_gpu_timestamps": { "enabled": false }
+  },
+  "stutter_flagger": {
+    "enabled": true,
+    "p50_window_frames": 240,
+    "stutter_ratio": 2.5,
+    "min_frame_ms": 5.0
+  },
+  "recorder": {
+    "enabled": true,
+    "rolling_minutes": 5,
+    "directory": "skygraph"
+  },
+  "crash_handler": {
+    "enabled": true
+  }
+}

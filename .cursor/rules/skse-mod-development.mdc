@@ -1,0 +1,220 @@
+---
+description: Conventions for the Skygraph SKSE plugin + viewer (CommonLibSSE-NG, C++23)
+alwaysApply: true
+---
+
+# Skygraph: SKSE Plugin + Standalone Viewer
+
+Skygraph is a real-time telemetry system for Skyrim SE/AE, purpose-built for diagnosing stutter and framedrops. It ships as two artifacts that share one wire protocol:
+
+- **`plugin/`** — SKSE plugin DLL (`skygraph.dll`) built on **CommonLibSSE-NG**.
+- **`viewer/`** — Standalone Win32 + DX11 + Dear ImGui (docking) + ImPlot executable (`skygraph.exe`).
+- **`protocol/`** — INTERFACE CMake target carrying the wire-format headers consumed by both.
+
+Honor these conventions in every change.
+
+## Repo layout
+
+```
+skygraph/
+  CMakeLists.txt, CMakePresets.json, vcpkg.json, README.md
+  scripts/
+    deploy.ps1              build + stage + .rar (plugin) / .zip (viewer)
+  protocol/                 INTERFACE target
+    include/skygraph/protocol/{version,messages,pipe}.h
+    docs/protocol.md
+  plugin/                   SKSE DLL
+    resources/skygraph.json default config, copied next to the DLL
+    src/
+      plugin.cpp            SKSEPluginInfo + SKSEPluginLoad
+      logging.{h,cpp}       spdlog wire-up against SKSE::log dir
+      config/plugin_config.{h,cpp}
+      samplers/             sampler.{h,cpp} base + frame, memory, gpu,
+                            cpu_breakdown, subsystem_hooks, papyrus_*,
+                            state, event_sources, streaming_sampler
+      diagnostics/          latest_cache.{h,cpp}, stutter_flagger.{h,cpp}
+      transport/            ring_buffer.h, pipe_server.{h,cpp},
+                            writer_thread.{h,cpp}, rolling_recorder.{h,cpp}
+      crash/seh_handler.{h,cpp}
+  viewer/                   Standalone exe
+    resources/imgui.ini.default
+    src/
+      main.cpp, app.{h,cpp}
+      transport/{pipe_client,file_source,ndjson_source}.{h,cpp}
+      state/telemetry_store.{h,cpp}
+      panels/{status_bar,charts_panel,papyrus_panel,stutter_panel,
+              events_panel,plugins_panel,timeline_panel}.{h,cpp}
+  tools/pipe_tail.py        debug: dump raw NDJSON from the pipe
+  docs/{installation,packaging,diagnosing-stutter,spec}.md
+```
+
+When adding a new sampler, hook, or panel, **mirror this layout**. Don't drop loose files into `plugin/src/` or `viewer/src/` root.
+
+## Toolchain
+
+- **Language**: C++23 (CommonLibSSE-NG requires `/std:c++latest` on MSVC).
+- **Compiler**: MSVC (latest VS 2022) or clang-cl. Never assume GCC.
+- **Build**: CMake (>= 3.21) + Ninja Multi-Config. Always go through `CMakePresets.json`:
+  ```powershell
+  cmake --preset msvc-x64-release
+  cmake --build --preset msvc-x64-release
+  ```
+- **Runtime library**: `/MD` (static MD). Matches CommonLibSSE-NG's ABI. Don't switch to `/MT` — it breaks shared CRT state.
+- **vcpkg triplet**: `x64-windows-static-md` (set in the preset; don't override at the call-site).
+- **Dependencies**:
+  - **CommonLibSSE-NG** is pulled via `FetchContent` in `plugin/CMakeLists.txt` (no custom vcpkg registry needed).
+  - Everything else (`spdlog`, `nlohmann_json`, `zlib`, `fmt`, `imgui[docking-experimental,dx11-binding,win32-binding]`, `implot`) is vcpkg-manifest in the top-level `vcpkg.json`.
+
+## Plugin entry point
+
+Skygraph uses the AE-style runtime-agnostic entry. Don't add the legacy `SKSEPlugin_Query` form for new code.
+
+```cpp
+SKSEPluginInfo(
+    .Version = REL::Version{ /* major, minor, patch, 0 */ },
+    .Name = "skygraph",
+    .Author = "skygraph",
+    .UsesAddressLibrary = true,
+    .UsesUpdatedStructs = true,
+)
+
+SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
+    SKSE::Init(a_skse);
+    /* load config, wire transport, register samplers, install crash handler */
+    return true;
+}
+```
+
+`SKSEPluginInfo` **must** declare `UsesAddressLibrary = true` so we stay AE-compatible.
+
+## Address Library, not sig scanning
+
+- Resolve every game address via **Address Library for SKSE** using `REL::RelocationID{ seID, aeID }` (or `REL::ID` for single-runtime).
+- Wrap function pointers in `static REL::Relocation<decltype(&thunk)> _original;`.
+- Never hardcode absolute addresses; never sig-scan.
+
+```cpp
+// GOOD
+static REL::Relocation<decltype(&Original)> _original;
+REL::Relocation<std::uintptr_t> target{
+    REL::RelocationID{ 12345, 67890 }, 0x42
+};
+
+// BAD - breaks across runtimes
+auto fn = reinterpret_cast<Fn*>(0x140123456);
+```
+
+## Hooking: fail-soft, feature-flagged, QPC-bracketed
+
+**Every** new hook in this project follows the same pattern enforced by `samplers/subsystem_hooks.cpp` and `samplers/papyrus_sampler.cpp`:
+
+1. **Allocate trampoline** at `SKSE::MessagingInterface::kPostLoad` (never at static init).
+2. **Wrap installation in try/catch**. If the address resolve fails, log a `warn` and **continue with that subsystem disabled**. The plugin must never refuse to load because a single hook failed.
+3. **Bracket the call** with `samplers::QpcNowUs()` (a thin wrapper around `QueryPerformanceCounter`) and feed the elapsed microseconds into the matching `CpuBreakdownSampler::Add*` bucket so the per-frame breakdown reflects the new subsystem.
+4. **Feature-flag the hook** in `plugin/resources/skygraph.json` so users with broken runtimes can disable it without rebuilding.
+5. **Update `CpuBreakdownSampler::SetEnabledMask`** so the viewer can show the user which subsystems are actually being measured.
+
+Skeleton for a new subsystem hook:
+
+```cpp
+struct MyHook {
+    static void thunk(/* args */) {
+        const auto t0 = samplers::QpcNowUs();
+        _original(/* args */);
+        samplers::CpuBreakdownSampler::AddMyBucketUs(samplers::QpcNowUs() - t0);
+    }
+    static inline REL::Relocation<decltype(thunk)> _original;
+    static constexpr REL::ID kSE{ /* */ };
+    static constexpr REL::ID kAE{ /* */ };
+};
+
+bool InstallMy() {
+    try {
+        SKSE::AllocTrampoline(14);
+        REL::Relocation<std::uintptr_t> target{
+            REL::RelocationID{ MyHook::kSE.offset(), MyHook::kAE.offset() }, 0x0
+        };
+        MyHook::_original =
+            SKSE::GetTrampoline().write_call<5>(target.address(), &MyHook::thunk);
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::warn("my_hook: install failed: {} -- folding into other_ms", e.what());
+        return false;
+    } catch (...) { return false; }
+}
+```
+
+The streaming sampler (`samplers/streaming_sampler.cpp`) is the **highest-fragility** hook in the project and must remain off by default in `skygraph.json`.
+
+## Threading & main-thread safety
+
+- Game-state reads that require `RE::ProcessLists`, `RE::PlayerCharacter`, `RE::TESDataHandler`, etc., **must** run on the main thread. Use `SKSE::GetTaskInterface()->AddTask([]{ ... })` (see `samplers/state_sampler.cpp`).
+- Win32-only APIs (`GetProcessMemoryInfo`, DXGI `QueryVideoMemoryInfo`, named-pipe I/O) are fine off the main thread; sampler `Loop()` methods own their own `std::thread`.
+- Never block the game thread on I/O. The named-pipe `WriteFile` lives on the dedicated writer thread.
+- `transport::StringSpscRing` is strict **single-producer, single-consumer**. If a sampler runs on its own thread it pushes directly; if a hook on the game thread does, that's also fine because only the writer thread pops. **Do not** add a second producer; if multiple producers are ever needed, switch to a mutexed queue rather than racing the SPSC invariant.
+
+## Transport contract
+
+- Every record emitted to the wire goes through `transport::WriterThread::Submit(std::string)`. Don't bypass it (the same call is what tees into the rolling recorder).
+- Records are NDJSON. One JSON object per line; type names are string constants in [`protocol/include/skygraph/protocol/messages.h`](mdc:protocol/include/skygraph/protocol/messages.h). **Never** spell a type string inline — always use the constant so a rename is a single-file change.
+- New record types go in `messages.h` with a comment block showing the field layout; bump `kProtocolMinor` for additive changes, `kProtocolMajor` for wire-breaking ones.
+
+## Shared "latest value" cache
+
+`diagnostics::LatestCache` is the cross-sampler read-only-from-many source of truth for the most recent observation of every metric. The stutter flagger uses it to build full-context snapshots without re-querying the game.
+
+- Every sampler that emits a snapshot-style record (memory, pressure, state, streaming, cell-load) **must** also `Update*` the cache before submitting.
+- The cache is wait-free for scalars (`std::atomic`) and behind one mutex for strings. Don't add coarse locks.
+
+## Stutter flagger
+
+`diagnostics::StutterFlagger::OnFrame(...)` is called from `samplers::FrameSampler`'s hook every frame. Don't move it out of that path; the timing relationship (we want the breakdown drained for the *same* frame we just measured) is load-bearing.
+
+When adding a new metric group, also add a field to the snapshot built in `stutter_flagger.cpp::OnFrame` if it's useful for diagnosing — that's the *only* place the user sees a fully cross-correlated picture.
+
+## Game data access (RE::)
+
+- All game types live in `RE::` (e.g. `RE::Actor`, `RE::TESForm`, `RE::PlayerCharacter::GetSingleton()`).
+- Singletons can return null on shutdown / before `kDataLoaded`. Always null-check.
+- Form lookups: `RE::TESDataHandler::GetSingleton()->LookupForm<T>(localFormID, "Plugin.esp")`. Never hardcode FormIDs across load orders.
+
+## Logging
+
+Use `spdlog` initialized by `plugin/src/logging.cpp` against `SKSE::log::log_directory()`. The default logger is set there — don't create per-translation-unit loggers.
+
+```cpp
+spdlog::info("memory: working_set={:.0f} MB", ws);
+spdlog::warn("hook: resolve failed, folding into other_ms");
+```
+
+**Never** `printf` / `std::cout` (no console). **Never** log at `info` inside a per-frame hook (60 lines/sec spam).
+
+## Configuration
+
+- `plugin/resources/skygraph.json` is the only config file. Loaded once at plugin init via `config::LoadOrDefault(...)`.
+- Every new feature flag goes in `config::PluginConfig` with a sensible default that's **off** if the feature is risky.
+- We do **not** use MCM/INI — both add VFS overhead under MO2 and we don't need runtime reconfiguration.
+
+## Viewer conventions
+
+- **ImGui docking branch is required.** The default layout ships as `viewer/resources/imgui.ini.default` and is copied to `imgui.ini` on first run.
+- Every panel lives under `viewer/src/panels/` and is a stateless free function in a `panels::<name>` sub-namespace, taking `const TelemetryStore&` (and an optional `State&` for sort/filter state). Pure presentation — never mutate the store from a panel.
+- New sources of telemetry should extend the `NdjsonSource` base class (see `pipe_client.{h,cpp}` and `file_source.{h,cpp}`) so panels keep working in replay mode without changes.
+
+## Don'ts
+
+- Don't link the CRT statically without matching CommonLibSSE-NG's `/MD` ABI.
+- Don't call `MessageBox` / dialog APIs from `SKSEPluginLoad` (no game window yet).
+- Don't ship debug DLLs (`/MDd`); CommonLibSSE-NG is built `/MD`.
+- Don't allocate inside a per-frame hook unless the budget is well understood. The frame sampler's hot path uses `nlohmann::json` for clarity; if profiling shows this matters, swap to a preallocated arena before optimizing elsewhere.
+- Don't commit `build/`, `vcpkg_installed/`, `dist/`, `.vs/`, or local `imgui.ini` — they're in `.gitignore`.
+- Don't write to `Data/SKSE/Plugins/` directly during dev. Drop the deploy `.rar` onto MO2 instead (see `scripts/deploy.ps1`).
+- Don't bypass `WriterThread::Submit` — the recorder will lose the record.
+
+## Useful references
+
+- CommonLibSSE-NG: <https://github.com/CharmedBaryon/CommonLibSSE-NG>
+- Address Library: <https://www.nexusmods.com/skyrimspecialedition/mods/32444>
+- SKSE source/docs: <https://skse.silverlock.org/>
+- ImGui docking branch: <https://github.com/ocornut/imgui/tree/docking>
+- ImPlot: <https://github.com/epezent/implot>

@@ -1,0 +1,52 @@
+# Build artifacts
+build/
+out/
+bin/
+lib/
+*.obj
+*.lib
+*.dll
+*.exe
+*.pdb
+*.exp
+*.ilk
+*.idb
+
+# vcpkg
+vcpkg_installed/
+.vcpkg-root
+vcpkg-manifest-install.log
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln.docstates
+CMakeUserPresets.json
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+*.cmake.in
+
+# OS junk
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.DS_Store
+
+# Local imgui state (default layout is checked in as imgui.ini.default)
+imgui.ini
+
+# Local config overrides
+skygraph.local.json
+
+# Recorded sessions
+*.ndjson
+*.ndjson.gz

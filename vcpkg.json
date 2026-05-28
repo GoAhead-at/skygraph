@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "skygraph",
+  "version-string": "0.1.0",
+  "description": "Real-time Skyrim telemetry: SKSE plugin + standalone viewer for diagnosing stutter.",
+  "builtin-baseline": "120deac3062162151622ca4860575a33844ba10b",
+  "dependencies": [
+    "fmt",
+    "spdlog",
+    "nlohmann-json",
+    "zlib",
+    "rapidcsv",
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental",
+        "dx11-binding",
+        "win32-binding"
+      ]
+    },
+    "implot"
+  ]
+}
