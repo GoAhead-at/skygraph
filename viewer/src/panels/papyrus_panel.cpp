@@ -81,6 +81,14 @@ void DrawTopPie(const std::vector<TelemetryStore::HotScript>& a_rows) {
     for (double v : values) total += v;
     if (total <= 0.0) return;
 
+    // ImPlot::PlotPieChart applies its label format string to the RAW value we
+    // pass, not to a computed share -- so handing it microseconds prints
+    // "2119.0%". Feed it percentages instead; the wedge angles are unaffected
+    // (ImPlot normalizes by the sum either way) and the labels read correctly.
+    std::vector<double> percents;
+    percents.reserve(values.size());
+    for (double v : values) percents.push_back(v / total * 100.0);
+
     // The pie gets a FIXED square plot region and NO ImPlot legend. An
     // outside legend would reserve a variable amount of width (it grows with
     // the longest script name), which shrinks the leftover plot rect and
@@ -97,8 +105,8 @@ void DrawTopPie(const std::vector<TelemetryStore::HotScript>& a_rows) {
                           ImPlotAxisFlags_NoDecorations,
                           ImPlotAxisFlags_NoDecorations);
         ImPlot::SetupAxesLimits(0, 1, 0, 1, ImPlotCond_Always);
-        ImPlot::PlotPieChart(labels.data(), values.data(),
-                             static_cast<int>(values.size()),
+        ImPlot::PlotPieChart(labels.data(), percents.data(),
+                             static_cast<int>(percents.size()),
                              0.5, 0.5, 0.4, "%.1f%%", 90.0,
                              ImPlotPieChartFlags_Normalize);
         ImPlot::EndPlot();

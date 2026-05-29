@@ -13,13 +13,13 @@
     "cpu_breakdown": {
       "enabled": true,
       "main_loop_hook": true,
-      "_NOTE": "havok/ai/render_submit hooks need Address Library IDs that match YOUR runtime. The defaults baked into the plugin are speculative. See docs/address-library.md. To override an ID without recompiling, set id_se / id_ae below; leave at 0 to use the plugin's compiled-in default.",
-      "havok_hook": false,
-      "havok_hook_ids": { "id_se": 0, "id_ae": 0 },
-      "ai_hook": false,
-      "ai_hook_ids": { "id_se": 0, "id_ae": 0 },
-      "render_submit_hook": false,
-      "render_submit_hook_ids": { "id_se": 0, "id_ae": 0 }
+      "_NOTE": "havok/ai/render_submit are CALL-SITE redirects: each *_hook_ids gives an Address Library id + the byte offset of the CALL instruction to patch (like papyrus.vm_hook's 0x7F). Safe to leave true: the plugin validates every id against your runtime's Address Library WITHOUT crashing on a miss, and refuses to patch unless the resolved address is a real CALL (0xE8). render_submit ships VERIFIED defaults (75461 SE / 77246 AE @ 0x9, from OpenAnimationReplacer's present hook) -- note it brackets Present, so its time includes vsync/GPU wait. havok and ai have NO verified id (0 = self-skip, logged); supply id_se/id_ae/offset to activate. id 0 means 'use the plugin default'. See docs/address-library.md.",
+      "havok_hook": true,
+      "havok_hook_ids": { "id_se": 0, "id_ae": 0, "offset": 0 },
+      "ai_hook": true,
+      "ai_hook_ids": { "id_se": 0, "id_ae": 0, "offset": 0 },
+      "render_submit_hook": true,
+      "render_submit_hook_ids": { "id_se": 0, "id_ae": 0, "offset": 0 }
     },
     "memory": { "enabled": true, "rate_hz": 1 },
     "memory_pressure": { "enabled": true, "rate_hz": 1 },

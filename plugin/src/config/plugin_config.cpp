@@ -30,12 +30,14 @@ void ReadSamplerToggle(const json& a_obj, const char* a_key, SamplerToggle& a_ou
 }
 
 // Address-Library ID override block:
-//   "<key>": { "id_se": 12345, "id_ae": 67890 }
-// Either field may be omitted/zero; zero means "leave installer default".
+//   "<key>": { "id_se": 12345, "id_ae": 67890, "offset": 127 }
+// Any field may be omitted/zero; zero means "leave installer default".
+// `offset` is the byte displacement from the resolved ID to the CALL site.
 void ReadHookIds(const json& a_obj, const char* a_key, HookIds& a_out) {
     if (auto it = a_obj.find(a_key); it != a_obj.end() && it->is_object()) {
         Read(*it, "id_se", a_out.id_se);
         Read(*it, "id_ae", a_out.id_ae);
+        Read(*it, "offset", a_out.offset);
     }
 }
 

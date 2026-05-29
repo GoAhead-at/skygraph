@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
     skygraph
-    VERSION 0.1.1
+    VERSION 0.1.2
     DESCRIPTION "Real-time Skyrim telemetry for diagnosing stutter"
     LANGUAGES CXX
 )

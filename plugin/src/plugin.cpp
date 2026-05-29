@@ -102,7 +102,7 @@ void EmitHello() {
         { "protocol", { { "major", kProtocolMajor }, { "minor", kProtocolMinor } } },
         { "product", {
             { "name", kProductName },
-            { "version", "0.1.0" }
+            { "version", "0.1.2" }
         } },
     };
     // Game runtime version, best-effort. Post-SKSE::Init the only stable
@@ -255,7 +255,8 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     const auto dllDir = PluginDllDirectory();
     g_config = skygraph::config::LoadOrDefault(dllDir);
 
-    skygraph::logging::Init("skygraph", LogLevelFromString(g_config.log.level));
+    skygraph::logging::Init("skygraph", LogLevelFromString(g_config.log.level),
+                            g_config.recorder.directory);
     spdlog::info("skygraph plugin {}.{}.{} (protocol {}.{}) loading",
                  skygraph::protocol::kProductVersionMajor,
                  skygraph::protocol::kProductVersionMinor,

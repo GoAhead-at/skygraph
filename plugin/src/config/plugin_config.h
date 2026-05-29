@@ -12,28 +12,39 @@ struct SamplerToggle {
     double rate_hz{ 1.0 };
 };
 
-// Address Library IDs for a single hook target across SE / AE.
-// A value of 0 means "use the hard-coded default baked into the corresponding
-// installer". A non-zero value overrides the default at runtime, so users can
-// retarget a hook for a different runtime (or fix a stale ID) without
-// recompiling. The default values are SPECULATIVE -- see docs/address-library.md.
+// Address Library IDs for a single hook target across SE / AE, plus the
+// in-function byte offset of the CALL instruction to redirect.
+//
+// A value of 0 for id_se/id_ae means "use the hard-coded default baked into
+// the corresponding installer"; a non-zero value overrides it at runtime so
+// users can retarget a hook for a different runtime (or fix a stale ID)
+// without recompiling. `offset` is the displacement from the resolved ID to
+// the CALL site (0 means "use the installer default offset"). The subsystem
+// hooks are call-site redirects -- the resolved address MUST point at a
+// `CALL rel32` (0xE8) instruction or the installer refuses to patch it.
+// See docs/address-library.md.
 struct HookIds {
     std::uint64_t id_se{ 0 };
     std::uint64_t id_ae{ 0 };
+    std::uint64_t offset{ 0 };
 };
 
-// CPU breakdown subsystem hooks default OFF because the Address Library IDs
-// in subsystem_hooks.cpp are unverified placeholders; enabling them with the
-// wrong ID will cause CommonLibSSE-NG to abort plugin load with a fatal
-// "Failed to find the id within the address library" messagebox.
-// Verify each ID against your runtime, then flip the matching flag to true.
-// To override the default IDs without recompiling, set the matching
-// {havok,ai,render_submit}_hook_ids fields in skygraph.json.
+// CPU breakdown subsystem hooks. These can be left ON safely: the installer
+// (subsystem_hooks.cpp) validates every Address Library ID against the loaded
+// database WITHOUT triggering CommonLibSSE-NG's fatal report_and_fail path,
+// and additionally verifies the resolved address points at a real CALL site
+// (0xE8) before patching. A missing id, an id absent from this runtime's
+// Address Library, or a target that isn't a call site each cause the hook to
+// be skipped (its time folds into other_ms) -- the plugin loads regardless.
+// render_submit ships a VERIFIED default (OpenAnimationReplacer's present
+// hook). havok and ai have no verified id and self-skip until you supply a
+// call-site id+offset via the {havok,ai}_hook_ids blocks in skygraph.json.
+// See docs/address-library.md.
 struct CpuBreakdownConfig {
     bool enabled{ true };
-    bool havok_hook{ false };
-    bool ai_hook{ false };
-    bool render_submit_hook{ false };
+    bool havok_hook{ true };
+    bool ai_hook{ true };
+    bool render_submit_hook{ true };
     bool main_loop_hook{ true };
     HookIds havok_hook_ids;
     HookIds ai_hook_ids;
