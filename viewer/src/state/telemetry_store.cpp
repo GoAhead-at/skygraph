@@ -129,12 +129,22 @@ void TelemetryStore::Ingest(const nlohmann::json& a_rec) {
         if (auto it = a_rec.find("scripts"); it != a_rec.end() && it->is_array()) {
             hot_scripts.reserve(it->size());
             for (const auto& sj : *it) {
+                auto name = Get<std::string>(sj, "name");
+                const auto us = Get<std::uint64_t>(sj, "us_window");
                 hot_scripts.push_back(HotScript{
-                    Get<std::string>(sj, "name"),
-                    Get<std::uint64_t>(sj, "us_window"),
+                    name,
+                    us,
                     Get<float>(sj, "cps"),
                     Get<float>(sj, "pct_frame"),
                 });
+                // Accumulate for the cumulative pie. Summing the (decayed)
+                // window value each snapshot integrates activity over time;
+                // a consistently busy script climbs, a one-off blip barely
+                // registers. Normalized in the pie so absolute scale is moot.
+                if (!name.empty()) {
+                    papyrus_cumulative_us[std::move(name)] +=
+                        static_cast<double>(us);
+                }
             }
         }
 
@@ -192,6 +202,19 @@ void TelemetryStore::Ingest(const nlohmann::json& a_rec) {
         // Latest only; no ring yet (added in streaming_sampler phase).
         (void)a_rec;
 
+    } else if (type == "ack") {
+        // Command acknowledgement from the plugin. The save_session ack
+        // carries the absolute path the pinned session was written to, so we
+        // can show the user where the file actually landed (it goes to the
+        // SKSE log dir, NOT next to the viewer exe).
+        if (Get<std::string>(a_rec, "for_cmd") == "save_session") {
+            if (auto p = Get<std::string>(a_rec, "path"); !p.empty()) {
+                last_saved_path = p;
+                last_saved_at = std::chrono::steady_clock::now();
+                spdlog::info("store: session saved to '{}'", p);
+            }
+        }
+
     } else {
         spdlog::debug("store: unknown record type '{}'", type);
     }
@@ -207,6 +230,7 @@ void TelemetryStore::Clear() {
     connection.reset();
 
     hot_scripts.clear();
+    papyrus_cumulative_us.clear();
     load_order.clear();
     frames.clear();
     breakdowns.clear();
@@ -218,6 +242,12 @@ void TelemetryStore::Clear() {
     last_heartbeat_t = 0.0;
     total_records = 0;
     total_heartbeats = 0;
+    last_saved_path.reset();
+    last_saved_at = {};
+}
+
+void TelemetryStore::ResetPapyrusCumulative() {
+    papyrus_cumulative_us.clear();
 }
 
 }  // namespace skygraph::viewer

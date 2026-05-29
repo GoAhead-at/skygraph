@@ -36,7 +36,6 @@ void DrawTopPie(const std::vector<TelemetryStore::HotScript>& a_rows) {
     if (a_rows.empty()) return;
 
     constexpr int kMaxSlices = 10;
-    constexpr float kPieHeight = 240.0f;
 
     std::vector<TelemetryStore::HotScript> sorted = a_rows;
     const auto cutEnd = sorted.begin() +
@@ -78,9 +77,22 @@ void DrawTopPie(const std::vector<TelemetryStore::HotScript>& a_rows) {
     // any prior push_back may have reallocated and invalidated earlier ones.
     for (const auto& s : labelStore) labels.push_back(s.c_str());
 
-    if (ImPlot::BeginPlot("##script_pie", ImVec2(-1, kPieHeight),
-                          ImPlotFlags_Equal | ImPlotFlags_NoMouseText)) {
-        ImPlot::SetupLegend(ImPlotLocation_East, ImPlotLegendFlags_Outside);
+    double total = 0.0;
+    for (double v : values) total += v;
+    if (total <= 0.0) return;
+
+    // The pie gets a FIXED square plot region and NO ImPlot legend. An
+    // outside legend would reserve a variable amount of width (it grows with
+    // the longest script name), which shrinks the leftover plot rect and
+    // makes the circle resize whenever the script names change. By fixing the
+    // plot to kPieSize x kPieSize and rendering our own legend beside it, the
+    // pie stays exactly the same size no matter how long the names are.
+    constexpr float kPieSize = 220.0f;
+
+    ImGui::BeginGroup();
+    if (ImPlot::BeginPlot("##script_pie", ImVec2(kPieSize, kPieSize),
+                          ImPlotFlags_Equal | ImPlotFlags_NoMouseText
+                          | ImPlotFlags_NoLegend)) {
         ImPlot::SetupAxes(nullptr, nullptr,
                           ImPlotAxisFlags_NoDecorations,
                           ImPlotAxisFlags_NoDecorations);
@@ -91,20 +103,70 @@ void DrawTopPie(const std::vector<TelemetryStore::HotScript>& a_rows) {
                              ImPlotPieChartFlags_Normalize);
         ImPlot::EndPlot();
     }
+    ImGui::EndGroup();
+
+    // Manual legend to the right. Free to be as wide as the names require
+    // without ever feeding back into the pie's size. Swatch colors are pulled
+    // from the same colormap PlotPieChart used (slice i -> colormap index i).
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    for (std::size_t i = 0; i < labelStore.size(); ++i) {
+        const ImVec4 col =
+            ImPlot::GetColormapColor(static_cast<int>(i));
+        const double pct = values[i] / total * 100.0;
+        ImGui::ColorButton(fmt::format("##sw{}", i).c_str(), col,
+                           ImGuiColorEditFlags_NoTooltip
+                           | ImGuiColorEditFlags_NoDragDrop,
+                           ImVec2(12, 12));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(
+            fmt::format("{:5.1f}%  {}", pct, labelStore[i]).c_str());
+    }
+    ImGui::EndGroup();
+
     ImGui::Separator();
 }
 
 }  // namespace
 
-void Draw(const TelemetryStore& a_store, State& a_state) {
+void Draw(TelemetryStore& a_store, State& a_state) {
     DrawHeader(a_store);
 
-    if (a_store.hot_scripts.empty()) {
+    if (a_store.hot_scripts.empty() && a_store.papyrus_cumulative_us.empty()) {
         ImGui::TextDisabled("no script timing yet (VM hook may not be installed)");
         return;
     }
 
-    DrawTopPie(a_store.hot_scripts);
+    // Pie source selector. Cumulative = total activity since connect/reset
+    // (stable, answers "what's been busiest"); Live = the decayed snapshot
+    // (volatile, answers "what's hot this instant", same data as the table).
+    ImGui::TextUnformatted("Pie:");
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Cumulative", a_state.pie_cumulative)) {
+        a_state.pie_cumulative = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Live", !a_state.pie_cumulative)) {
+        a_state.pie_cumulative = false;
+    }
+    if (a_state.pie_cumulative) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset")) {
+            a_store.ResetPapyrusCumulative();
+        }
+    }
+
+    if (a_state.pie_cumulative) {
+        std::vector<TelemetryStore::HotScript> cumulative;
+        cumulative.reserve(a_store.papyrus_cumulative_us.size());
+        for (const auto& [name, us] : a_store.papyrus_cumulative_us) {
+            cumulative.push_back(TelemetryStore::HotScript{
+                name, static_cast<std::uint64_t>(us), 0.0f, 0.0f });
+        }
+        DrawTopPie(cumulative);
+    } else {
+        DrawTopPie(a_store.hot_scripts);
+    }
 
     constexpr ImGuiTableFlags kFlags =
         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg

@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace skygraph::viewer {
@@ -123,6 +124,17 @@ public:
     std::vector<HotScript> hot_scripts;
     std::vector<std::string> load_order;
 
+    // Cumulative per-script activity since connect (or last reset). hot_scripts
+    // above is heavily decayed by the plugin (~0.6s half-life) so it only ever
+    // shows "what's hot right now"; this map sums each papyrus.top window so
+    // the pie chart can show total activity over time instead. Keyed by script
+    // name -> accumulated us across all snapshots.
+    std::unordered_map<std::string, double> papyrus_cumulative_us;
+
+    // Drop the cumulative Papyrus accumulator without touching the rest of the
+    // session (used by the "Reset" button in the Papyrus panel).
+    void ResetPapyrusCumulative();
+
     // Rings for the time-series panels.
     std::deque<FrameSample> frames;
     std::deque<BreakdownSample> breakdowns;
@@ -135,6 +147,12 @@ public:
     double last_heartbeat_t{ 0.0 };
     std::uint64_t total_records{ 0 };
     std::uint64_t total_heartbeats{ 0 };
+
+    // Last "save_session" ack from the plugin: absolute path the recorder
+    // wrote the pinned session to, plus when we received it (steady clock,
+    // used by the status bar to fade the confirmation out).
+    std::optional<std::string> last_saved_path;
+    std::chrono::steady_clock::time_point last_saved_at{};
 
     // Ingest one parsed record. Routes by `type` field. Unknown types are
     // logged but otherwise ignored.

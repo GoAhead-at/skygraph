@@ -140,6 +140,20 @@ void Draw(const TelemetryStore& a_store,
         }
         ImGui::EndDisabled();
 
+        // Transient "saved" confirmation: show for a few seconds after the
+        // plugin acks a save, since the file lands in the SKSE log dir (not
+        // next to the exe) and users otherwise can't tell it worked.
+        if (a_store.last_saved_path) {
+            const auto age = std::chrono::steady_clock::now() - a_store.last_saved_at;
+            if (age < std::chrono::seconds{ 8 }) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "saved");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", a_store.last_saved_path->c_str());
+                }
+            }
+        }
+
         ImGui::EndMainMenuBar();
     }
 
@@ -150,6 +164,10 @@ void Draw(const TelemetryStore& a_store,
     if (ImGui::BeginPopupModal("Save Session", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Pin the current rolling buffer to a permanent file.");
+        ImGui::TextDisabled(
+            "Saved into the SKSE log folder, not next to this viewer:");
+        ImGui::TextDisabled(
+            "Documents\\My Games\\<Skyrim>\\SKSE\\skygraph\\");
         ImGui::Separator();
         ImGui::InputText("Name", a_state.save_name, sizeof(a_state.save_name));
         ImGui::Separator();
@@ -162,6 +180,23 @@ void Draw(const TelemetryStore& a_store,
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(120, 0))) {
             ImGui::CloseCurrentPopup();
+        }
+
+        // If we've saved at least once this session, show the resolved path
+        // from the plugin's ack with quick copy / open-folder actions.
+        if (a_store.last_saved_path) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Last saved:");
+            ImGui::TextWrapped("%s", a_store.last_saved_path->c_str());
+            if (ImGui::Button("Copy path")) {
+                ImGui::SetClipboardText(a_store.last_saved_path->c_str());
+            }
+            if (a_cb.on_reveal_path) {
+                ImGui::SameLine();
+                if (ImGui::Button("Open folder")) {
+                    a_cb.on_reveal_path(*a_store.last_saved_path);
+                }
+            }
         }
         ImGui::EndPopup();
     }

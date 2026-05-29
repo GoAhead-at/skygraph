@@ -24,6 +24,7 @@
 #include <commdlg.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <shellapi.h>
 
 #include <filesystem>
 
@@ -271,6 +272,13 @@ void App::DrawUi() {
     };
     cb.on_connect_live = [this] { OpenLivePipe(); };
     cb.on_exit = [this] { _running = false; };
+    cb.on_reveal_path = [](const std::string& a_path) {
+        // Open Explorer with the file highlighted. /select, needs the path
+        // as a single argument; ShellExecute handles the quoting.
+        const std::string args = "/select,\"" + a_path + "\"";
+        ShellExecuteA(nullptr, "open", "explorer.exe", args.c_str(),
+                      nullptr, SW_SHOWNORMAL);
+    };
     panels::status_bar::Draw(_store, *_source, statusState, cb);
 
     // Foundation phase: minimal panels so the docking layout has something

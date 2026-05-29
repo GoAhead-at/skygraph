@@ -24,6 +24,8 @@ struct Callbacks {
     std::function<void()> on_open_replay;
     std::function<void()> on_connect_live;
     std::function<void()> on_exit;
+    // Open the OS file browser with the given file selected/highlighted.
+    std::function<void(const std::string&)> on_reveal_path;
 };
 
 void Draw(const TelemetryStore& a_store,

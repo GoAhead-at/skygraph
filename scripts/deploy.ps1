@@ -449,21 +449,44 @@ Write-Information "    viewer EXE: $viewerExe"
 
 # --- Stage ----------------------------------------------------------------
 
+# A skygraph.exe launched FROM the stage dir (build/deploy-stage/viewer)
+# holds an exclusive lock on its own image and log file, so Windows refuses
+# to delete or overwrite it -- which would make Remove-Item below blow up and
+# leave the stage half-cleaned. Proactively stop any such instance. We only
+# target processes whose image actually lives under $Stage, so a viewer the
+# user runs from dist/ or elsewhere is left untouched.
+$stageFull = [System.IO.Path]::GetFullPath($Stage)
+$staleViewers = @(Get-Process -Name skygraph -ErrorAction SilentlyContinue |
+    Where-Object {
+        try { $_.Path -and $_.Path.StartsWith($stageFull, [System.StringComparison]::OrdinalIgnoreCase) }
+        catch { $false }
+    })
+foreach ($proc in $staleViewers) {
+    Write-Information "==> Stopping staged viewer still running: $($proc.Path) (PID $($proc.Id))"
+    try {
+        $proc | Stop-Process -Force -ErrorAction Stop
+        $proc.WaitForExit(5000) | Out-Null
+    } catch {
+        Write-Warning "Could not stop PID $($proc.Id): $($_.Exception.Message)"
+    }
+}
+
 Write-Information "==> Staging at $Stage"
 if (Test-Path $Stage) {
     try {
         Remove-Item -Recurse -Force $Stage -ErrorAction Stop
     } catch [System.IO.IOException] {
-        # Most common cause: the user is running build/deploy-stage/viewer/skygraph.exe
-        # (or has its log file open in an editor). Re-throw with a clearer hint.
+        # We already tried to stop staged viewers above, so reaching here means
+        # something else (another editor, antivirus scan, a viewer copied out
+        # of the stage but still cwd'd into it) holds a handle. Re-throw with a
+        # clearer hint.
         throw @"
 Failed to clean stage dir '$Stage':
   $($_.Exception.Message)
 
-The viewer or one of its log files is still in use. Close any running
-skygraph.exe instance (especially one launched from build/deploy-stage/)
-and re-run this script. The build succeeded, so '-SkipBuild' will let
-you skip recompilation.
+A file under build/deploy-stage is still in use (commonly a running
+skygraph.exe or an open log file). Close it and re-run. The build
+succeeded, so '-SkipBuild' will let you skip recompilation.
 "@
     }
 }
