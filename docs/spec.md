@@ -1,6 +1,6 @@
 ---
 name: skygraph telemetry spec
-overview: Spec a real-time Skyrim telemetry system whose primary use case is diagnosing the source of stutter and framedrops. An SKSE plugin (CommonLibSSE-NG, C++23) samples in-game metrics, breaks down CPU frame time per subsystem (Papyrus/Havok/AI/render/streaming), auto-flags stutter frames with a full context snapshot, and streams NDJSON over a Windows named pipe. A standalone Dear ImGui + ImPlot viewer renders live charts, a Papyrus hot-script profiler, a stutter list with annotated context, an event log, frame-pacing histogram (1%/0.1% lows), and a replay-from-disk mode. Includes GPU timestamp queries, resource streaming hitch detection, and a crash catcher with rolling-buffer recording.
+overview: Spec a real-time Skyrim telemetry system whose primary use case is diagnosing the source of stutter and framedrops. An SKSE plugin (CommonLibSSE-NG, C++23) samples in-game metrics, breaks down CPU frame time per subsystem (Papyrus/Havok/AI/render/streaming), auto-flags stutter frames with a full context snapshot, and streams NDJSON over a Windows named pipe. A standalone Dear ImGui + ImPlot viewer renders live charts, a Papyrus hot-script profiler, a stutter list with annotated context, an event log, frame-pacing histogram (1%/0.1% lows), and a replay-from-disk mode. The Papyrus tooling goes deep: a live per-stack monitor (script+function, state, time-in-state) with sort/filter/prefix-grouping and pause-display, a session-cumulative per-function profiler (calls/total/avg/max), a total VM-execution-per-frame graph with rolling avg/peak, plus duplex diagnostics (on-demand full stack-trace dump, and an opt-in Force Return to unstick latent-waiting stacks). Includes GPU timestamp queries, resource streaming hitch detection, and a crash catcher with rolling-buffer recording.
 todos:
   - id: foundation
     content: "Foundation: monorepo scaffolding (top-level CMakeLists, CMakePresets, vcpkg.json, .gitignore) + protocol/ INTERFACE target with version.h/pipe.h/messages.h + minimal plugin DLL (SKSEPluginLoad + logging + config loader + pipe_server skeleton sending a 1Hz heartbeat) + minimal viewer (DX11+ImGui init, pipe_client, status bar showing 'Connected'). Acceptance: launch game, launch viewer, see heartbeats arriving."
@@ -13,6 +13,9 @@ todos:
     status: pending
   - id: papyrus
     content: "Papyrus profiler: build mock-VM unit test harness, then Address-Library-resolved hook on BSScript VM stack run/yield with QPC bracketing and per-script attribution map. Add papyrus.snapshot (10Hz) and papyrus.top (10Hz) record types. Build sortable hot-script table panel with click-to-pin."
+    status: pending
+  - id: papyrus_deepdive
+    content: "Papyrus deep-dive tooling (live stack monitor + per-function profiler + VM exec graph + duplex diagnostics). (1) Live stack monitor: 10Hz papyrus.stacks record enumerating every active/suspended/latent stack {stack_id, script, function, state in [Running, WaitLatent, WaitCall, ...], active_ms = time held in current state}; viewer renders a sortable, name-filterable, prefix-grouped table (script prefix => owning mod) with a Pause-Display checkbox that freezes updates for inspection. (2) Per-function profiler: extend attribution from per-script to per-FUNCTION with non-decayed session-cumulative counters; emit papyrus.profile {script, function, calls, total_us, avg_us, max_us}; viewer Script Profiler window is sortable by any column and clearable (reset_profile cmd) to start a fresh session. (3) Total VM Execution graph: ImPlot line of per-frame VM ms (built on existing cpu_breakdown.papyrus_ms) with rolling average + peak over a configurable trailing window, to correlate frame drops with Papyrus load spikes. (4) Duplex diagnostics: {cmd:dump_stack,stack_id} => plugin walks the stack's frames and replies with papyrus.stack_trace {stack_id, frames:[{script, function}], text}, logged to skygraph.log and shown in the viewer; {cmd:force_return,stack_id} forces a latent-waiting stack to return immediately to unstick frozen events. Force Return MUTATES live VM state and is gated behind config papyrus.allow_vm_control (default false) with a prominent warning in the UI and log. {cmd:reset_profile} clears profiler aggregates."
     status: pending
   - id: state_events
     content: "Game state + events: state sampler (cell, player pos, ProcessLists actor counts, loaded refs at 2Hz). Event sources: hook cell attach/detach (with start/end bracketing to emit duration_ms), SaveLoad events, ModCallbackEvent dispatch. Add Event Log panel (color-coded, filterable) and Plugins/load-order panel."
@@ -81,7 +84,8 @@ flowchart LR
 - **IPC**: Windows named pipe `\\.\pipe\skygraph`, duplex, plugin = server. Multiple viewer connections supported via multiple pipe instances.
 - **Wire format**: NDJSON, one JSON object per pipe message. Schema version constant in `protocol/include/skygraph/protocol/version.h`; viewer refuses to connect on mismatch.
 - **Viewer tech**: C++23 + Dear ImGui (docking branch) + ImPlot + DX11. Single statically-linked exe, no runtime deps.
-- **Telemetry scope (maximal + stutter diagnosis)**: frame, per-subsystem CPU breakdown (Papyrus/Havok/AI/render submit/streaming/other), memory + pressure (page faults, commit charge), VRAM, full Papyrus VM (incl. per-script CPU time), game state, actor counts, events (cell/save/mod with timed cell-load durations), GPU timestamp queries, resource-streaming hitches, SEH/VEH crash handler.
+- **Telemetry scope (maximal + stutter diagnosis)**: frame, per-subsystem CPU breakdown (Papyrus/Havok/AI/render submit/streaming/other), memory + pressure (page faults, commit charge), VRAM, full Papyrus VM (incl. per-script and per-function CPU time, a live per-stack monitor with state + time-in-state, and a session-cumulative profiler), game state, actor counts, events (cell/save/mod with timed cell-load durations), GPU timestamp queries, resource-streaming hitches, SEH/VEH crash handler.
+- **Papyrus control plane (opt-in)**: the viewer can request a full stack-trace dump for any live stack (read-only), and — only when `papyrus.allow_vm_control` is enabled (default off) — issue a Force Return to unstick a latent-waiting stack. This is the one place skygraph deliberately steps beyond read-only telemetry; it is gated, defaulted off, and warned about in both UI and log.
 - **Stutter diagnosis (primary use case)**: plugin maintains rolling p50 of frame_ms; any frame > Nx p50 (default 2.5) emits `event.stutter` carrying a full context snapshot. Viewer surfaces a Stutter list, frame-time histogram, and 1% / 0.1% lows.
 - **Config**: `SKSE/Plugins/skygraph.json` next to the DLL, loaded once at plugin init. No protocol-driven subscription.
 - **Recording**: rolling gzipped NDJSON in `Documents/My Games/Skyrim Special Edition/SKSE/skygraph/`, default 5 min cap. Viewer "Save session" button sends a command upstream to pin the current rolling window with a permanent filename.
@@ -97,6 +101,10 @@ flowchart LR
 - **memory.pressure** (1 Hz): `page_faults_per_sec`, `commit_charge_mb`, `commit_limit_mb`
 - **papyrus.snapshot** (10 Hz): `active_stacks`, `suspended_stacks`, `latent_queue_depth`
 - **papyrus.top** (10 Hz): top-N hot scripts `[{name, us_window, calls_per_sec, pct_frame}]`
+- **papyrus.stacks** (10 Hz): live stack monitor — per-stack `[{stack_id, script, function, state, active_ms}]` where `state` ∈ {`Running`, `WaitLatent`, `WaitCall`, ...} and `active_ms` is time held in the current state (for the sortable / filterable / prefix-grouped table)
+- **papyrus.profile** (1–2 Hz, session-cumulative): per-function `[{script, function, calls, total_us, avg_us, max_us}]`; cleared by `reset_profile`
+- **papyrus.stack_trace** (response to `dump_stack`): `{stack_id, frames:[{script, function}], text}` — also written to `skygraph.log`
+- *(Total VM Execution graph reuses `cpu_breakdown.papyrus_ms`; the viewer derives the rolling average + peak over a trailing window — no new record needed.)*
 - **state** (2 Hz): `cell_name`, `worldspace`, `player_pos[3]`, `actor_counts{high, mid_high, mid_low, low}`, `loaded_refs`
 - **streaming** (2 Hz): `queue_depth`, `bytes_per_sec`, `in_flight_requests`
 - **event.cell_attach / cell_detach** (as-they-happen): now include `duration_ms`
@@ -115,6 +123,9 @@ Server -> client push (one record per `WriteFile` call, newline-terminated):
 {"t":1716913456.123,"type":"cpu_breakdown","papyrus_ms":1.8,"havok_ms":2.4,"ai_ms":3.1,"render_submit_ms":2.6,"streaming_ms":0.3,"other_ms":1.9}
 {"t":1716913456.130,"type":"papyrus.snapshot","active":42,"suspended":3,"latent":1}
 {"t":1716913456.131,"type":"papyrus.top","scripts":[{"name":"WICasterAlias","us_window":12300,"cps":4.0,"pct_frame":0.7}]}
+{"t":1716913456.131,"type":"papyrus.stacks","stacks":[{"stack_id":1837,"script":"WICasterAlias","function":"OnUpdate","state":"Running","active_ms":3.2},{"stack_id":1840,"script":"DLC1NPCMonitor","function":"RegisterForUpdate","state":"WaitLatent","active_ms":812.5}]}
+{"t":1716913456.500,"type":"papyrus.profile","functions":[{"script":"WICasterAlias","function":"OnUpdate","calls":1840,"total_us":920000,"avg_us":500,"max_us":11200}]}
+{"t":1716913457.010,"type":"papyrus.stack_trace","stack_id":1837,"frames":[{"script":"WICasterAlias","function":"OnUpdate"},{"script":"WIInternal","function":"DispatchUpdate"}],"text":"WICasterAlias.OnUpdate <- WIInternal.DispatchUpdate"}
 {"t":1716913456.140,"type":"event.cell_attach","cell":"Whiterun","duration_ms":47.2}
 {"t":1716913456.190,"type":"event.stutter","frame_ms":83.4,"p50_ms":16.7,"ratio":5.0,"snapshot":{"cpu_breakdown":{"papyrus_ms":2.1,"havok_ms":12.3,"ai_ms":58.0,"render_submit_ms":3.0,"streaming_ms":6.2,"other_ms":1.8},"cell":"Whiterun","in_flight_cell_load":"WhiterunOrigin","top_papyrus":[{"name":"WICasterAlias","us":4200}],"actor_counts":{"high":42,"mid_high":18,"mid_low":7,"low":120},"vram_headroom_mb":420,"page_faults_per_sec":3200,"streaming_queue_depth":24}}
 ```
@@ -124,7 +135,12 @@ Client -> server commands:
 ```json
 {"cmd":"save_session","name":"my-test-run"}
 {"cmd":"ping"}
+{"cmd":"dump_stack","stack_id":1837}
+{"cmd":"force_return","stack_id":1840}
+{"cmd":"reset_profile"}
 ```
+
+`force_return` is honored only when `papyrus.allow_vm_control` is `true` in `skygraph.json`; otherwise the plugin rejects it and replies with an `ack` carrying an `error`.
 
 ## Repo Layout
 
@@ -148,7 +164,7 @@ skygraph/
       main.cpp, app.{h,cpp}
       transport/{pipe_client, ndjson_source}.{h,cpp}
       state/{telemetry_store, script_table, stutter_log}.{h,cpp}
-      panels/{status_bar, charts_panel, breakdown_panel, papyrus_panel, stutter_panel, events_panel, plugins_panel, timeline_panel}.{h,cpp}
+      panels/{status_bar, charts_panel, breakdown_panel, papyrus_panel, stack_monitor_panel, script_profiler_panel, vm_exec_panel, stutter_panel, events_panel, plugins_panel, timeline_panel}.{h,cpp}
     resources/{imgui.ini.default, icon.ico}
   tools/pipe_tail.py       debug: dump raw NDJSON from pipe
   docs/{architecture, installation, packaging}.md
@@ -175,3 +191,5 @@ skygraph/
 - **Stutter-flagger overhead**: per-frame p50 computation + snapshot allocation could itself stutter if naive. Mitigation: rolling p50 uses an order-statistic ring (no sort), snapshot uses a preallocated arena reused across stutter events.
 - **SEH/VEH crash handler ordering**: must install after any third-party handler (NetScriptFramework, etc.) to chain correctly. Mitigation: install at the very end of `SKSEPluginLoad`, document load-order interactions, support chaining to a prior handler.
 - **Pipe backpressure**: viewer paused/slow could fill OS pipe buffer. Mitigation: writer thread uses overlapped I/O with a short timeout; on timeout, drop oldest records from the ring instead of blocking.
+- **Live stack enumeration**: walking the VM's running/suspended/latent stack lists every 10 Hz races against the VM mutating them on the game thread. Mitigation: enumerate under the VM's own lock where available, copy out only POD fields (ids, names, state, timestamps) into the ring, and wrap the whole read in try/catch so a transient bad layout degrades to a skipped tick rather than a crash (same fail-soft contract as the counters).
+- **Force Return mutates VM state** (the one non-read-only feature): forcing a latent stack to return can corrupt mod logic or a save if misused. Mitigation: gated behind `papyrus.allow_vm_control` (default **off**); when off the command is rejected with an `ack.error`; when on, the viewer shows an explicit warning affordance and every Force Return is logged with the target stack id, script, and function. Stack-trace dump (`dump_stack`) is read-only and always available.
