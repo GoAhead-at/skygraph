@@ -21,12 +21,30 @@ The plugin is what makes Skyrim emit telemetry; the viewer is what you look at w
 3. Verify in the MO2 right pane that **Plugins** does not flag any missing dependencies (Skygraph has none beyond Address Library).
 4. Launch the game through SKSE.
 
-After the first launch, confirm in `<MO2 profile>/Documents/My Games/Skyrim Special Edition/SKSE/skygraph.log` that you see:
+After the first launch, confirm in `<MO2 profile>/Documents/My Games/Skyrim Special Edition/SKSE/skygraph/skygraph.log` that you see:
 
 ```
-skygraph plugin 0.1.0 (protocol 1.0) loading
-pipe: server starting on '\\.\pipe\skygraph'
-skygraph plugin ready
+[10:34:48.963] [info] [1844] skygraph plugin 0.1.0 (protocol 1.0) loading
+[10:34:48.963] [info] [1844] pipe: server starting on '\\.\pipe\skygraph'
+[10:34:48.963] [info] [1844] recorder: started, writing to 'E:\SHARED\_STAEUBER\MyFiles\Documents\My Games\Skyrim Special Edition\SKSE\skygraph'
+[10:34:48.979] [info] [1844] cpu_breakdown: accumulator active (sub-hooks register independently)
+[10:34:48.979] [info] [1844] stutter_flagger: configured (enabled=true, ratio=2.5, min_ms=5)
+[10:34:48.979] [info] [1844] crash: VEH installed
+[10:34:48.979] [info] [1844] skygraph plugin ready
+[10:34:52.547] [info] [1844] skse: kPostLoad
+[10:34:52.547] [info] [1844] frame: Main::Update hook installed
+[10:34:52.547] [info] [1844] breakdown: installing subsystem hooks (requested havok=true ai=true render_submit=true)
+[10:34:52.547] [warning] [1844] breakdown: havok hook skipped -- no Address Library id configured for SE (set samplers.cpu_breakdown.havok_hook_ids in skygraph.json); folding into other_ms
+[10:34:52.547] [warning] [1844] breakdown: ai hook skipped -- no Address Library id configured for SE (set samplers.cpu_breakdown.ai_hook_ids in skygraph.json); folding into other_ms
+[10:34:52.595] [info] [1844] breakdown: Address Library id index built (778674 ids)
+[10:34:52.595] [info] [1844] breakdown: render_submit hook installed at call site 0x7FF75765A2B9 (id 75461 +0x9, SE, original callee 0x7FF7568D2CC8)
+[10:34:52.595] [info] [1844] breakdown: enabled mask havok=false ai=false render_submit=true papyrus=false streaming=false
+[10:34:52.595] [info] [1844] papyrus: VM function-call hook installed (id_se=98130 id_ae=104853 offset=0x7f)
+[10:34:52.595] [info] [1844] papyrus: sampler started (hz=10, top_n=16, hook=true)
+[10:37:20.131] [info] [15740] skse: kDataLoaded
+[10:37:20.137] [info] [15740] events: sinks installed
+[10:37:20.138] [info] [15740] state: sampler started (hz=2)
+
 ```
 
 ## Plugin install (Vortex / manual)

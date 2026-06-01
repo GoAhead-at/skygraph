@@ -21,6 +21,16 @@ namespace skygraph::transport {
 // user can tell when overflow happened.
 //
 // Capacity is rounded up to the next power of two for cheap modulo via mask.
+//
+// _head, _tail and _dropped are each alignas(64) so they land on separate
+// cache lines -- this is the whole point (it stops the producer's _head write
+// from invalidating the consumer's _tail line and vice versa). MSVC's C4324
+// just reports the padding that alignment necessarily introduces, so we
+// silence it here; the padding is intentional, not a mistake.
+#if defined(_MSC_VER)
+#    pragma warning(push)
+#    pragma warning(disable : 4324)  // structure padded due to alignas
+#endif
 class StringSpscRing {
 public:
     explicit StringSpscRing(std::size_t a_capacityHint);
@@ -57,6 +67,9 @@ private:
     alignas(kCacheLine) std::atomic<std::size_t> _tail{ 0 };  // consumer-only
     alignas(kCacheLine) std::atomic<std::size_t> _dropped{ 0 };
 };
+#if defined(_MSC_VER)
+#    pragma warning(pop)
+#endif
 
 inline StringSpscRing::StringSpscRing(std::size_t a_capacityHint)
     : _capacity{ RoundUpPow2(a_capacityHint == 0 ? 1 : a_capacityHint) },
